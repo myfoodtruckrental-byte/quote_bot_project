@@ -1,3 +1,12 @@
+# Git
+.git
+.gitignore
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
 # Python
 __pycache__/
 *.pyc
@@ -5,6 +14,8 @@ __pycache__/
 *.pyd
 .env
 venv/
+*.bak
+*.bak.final
 
 # Other
 .idea/
@@ -21,5 +32,3 @@ Quote CSV/
 *.jpg
 *.png
 *.webp
-*.bak
-*.bak.final
