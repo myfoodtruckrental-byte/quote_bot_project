@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Other
+.idea/
+.vscode/
+*.log
+Export/
+Quote CSV/
+*output.txt
+*output_clean.txt
+*log.txt
+*.pkl
+*.zip
+*.pdf
+*.jpg
+*.png
+*.webp
+*.bak
+*.bak.final
