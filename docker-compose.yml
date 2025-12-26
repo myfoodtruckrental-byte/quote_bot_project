@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  gotenberg:
+    image: gotenberg/gotenberg:7
+    network_mode: "host"
+    restart: always
+
+  api:
+    build: .
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    network_mode: "host"
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONPATH=/app
+    depends_on:
+      - gotenberg
+    restart: always
+
+  bot:
+    build: .
+    command: python -c "import sys; sys.path.append('/app'); from main import main; main()"
+    network_mode: "host"
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONPATH=/app
+    depends_on:
+      - api
+    restart: always

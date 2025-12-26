@@ -1,0 +1,256 @@
+# ============================================================================
+# FIX 1: EDITING_FIELD section in handle_text() 
+# Replace lines 352-391 with this:
+# ============================================================================
+
+    elif current_state == EDITING_FIELD:
+        field_to_edit = context.user_data.pop("editing_field", None)
+        if not field_to_edit:
+            await update.message.reply_text("An error occurred. Please start over.")
+            return await start_command(update, context)
+
+        is_valid, processed_value, error_message = True, user_text, ""
+
+        # Apply validation based on the field being edited
+        if field_to_edit == "truck_number":
+            is_valid, error_message = validate_truck_number(user_text)
+            if is_valid:
+                processed_value = user_text.strip().upper()
+        elif field_to_edit == "cust_contact":
+            is_valid, error_message = validate_phone_number(user_text)
+            if is_valid:
+                processed_value = user_text.strip()
+        elif field_to_edit in [
+            "rental_amount",
+            "security_deposit",
+            "road_tax_amount",
+            "insurance_amount",
+            "sticker_amount",
+        ]:
+            is_valid, price, error_message = validate_price(user_text)
+            if is_valid:
+                processed_value = price
+
+        if not is_valid:
+            await update.message.reply_text(f"❌ {error_message}\n\nPlease try again:")
+            # Put the editing field back so the user can retry
+            context.user_data["editing_field"] = field_to_edit
+            return
+
+        # Update the data
+        context.user_data[field_to_edit] = processed_value
+        await update.message.reply_text(
+            f"✅ '{field_to_edit.replace('_', ' ').title()}' updated successfully."
+        )
+
+        # If editing a rental fee, mark rental_fees_collected as False to trigger rebuild
+        if field_to_edit in [
+            "road_tax_amount",
+            "insurance_amount",
+            "sticker_amount",
+            "agreement_amount",
+            "puspakom_amount",
+        ]:
+            context.user_data["rental_fees_collected"] = False
+            # Trigger rebuild by calling ask_for_next_rental_fee with empty fees_to_ask
+            context.user_data["fees_to_ask"] = []
+            await ask_for_next_rental_fee(update, context)
+            return
+
+        # ⭐ FIX: Send updated confirmation message before returning to edit menu
+        await send_confirmation_message(update, context, is_review=False)
+
+        # Return to the edit selection menu
+        context.user_data["state"] = SELECTING_FIELD_TO_EDIT
+        reply_markup = build_edit_fields_keyboard(context.user_data)
+        await update.message.reply_text(
+            "You can edit another field or click 'Done Editing'.",
+            reply_markup=reply_markup,
+        )
+        return
+
+
+# ============================================================================
+# FIX 2: remove_items_callback_handler() 
+# Replace lines 1028-1068 with this:
+# ============================================================================
+
+async def remove_items_callback_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Handles the removal of a line item and ensures data persistence."""
+    query = update.callback_query
+    await query.answer()
+
+    # Parse callback data: format is "remove_item_{type}_{index}"
+    parts = query.data.split("_")
+    
+    # Validate callback data format
+    if len(parts) < 4:
+        await query.edit_message_text("❌ Invalid item selection.")
+        return
+    
+    try:
+        item_index = int(parts[-1])
+        item_type = "_".join(parts[2:-1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("❌ Invalid item format.")
+        return
+
+    removed_item_desc = "Unknown Item"
+
+    # Get current items
+    main_items = context.user_data.get("line_items", [])
+    service_items = context.user_data.get("service_line_items", [])
+
+    try:
+        # Handle different item types with bounds checking
+        if item_type == "main_item":
+            if 0 <= item_index < len(main_items):
+                removed_item = main_items.pop(item_index)
+                removed_item_desc = removed_item.get("line_description", "Unknown")
+                context.user_data["line_items"] = main_items
+            else:
+                await query.edit_message_text("❌ Item not found (invalid index).")
+                return
+
+        elif item_type == "service_item":
+            if 0 <= item_index < len(service_items):
+                removed_item = service_items.pop(item_index)
+                removed_item_desc = removed_item.get("line_description", "Unknown")
+                context.user_data["service_line_items"] = service_items
+            else:
+                await query.edit_message_text("❌ Item not found (invalid index).")
+                return
+
+        elif item_type == "main_rental_item":
+            if "main_rental_item" in context.user_data:
+                removed_item = context.user_data.pop("main_rental_item")
+                removed_item_desc = removed_item.get("line_description", "Rental Item")
+            else:
+                await query.edit_message_text("❌ Rental item not found.")
+                return
+        else:
+            await query.edit_message_text(f"❌ Unknown item type: {item_type}")
+            return
+
+        # Show success message
+        await query.edit_message_text(text=f"✅ Removed '{removed_item_desc}'.")
+
+        # Send updated confirmation message
+        await send_confirmation_message(update, context, is_review=False)
+
+        # Check if there are still items to remove
+        from .keyboards import build_remove_items_keyboard
+        
+        remaining_items_count = (
+            len(context.user_data.get("line_items", [])) +
+            len(context.user_data.get("service_line_items", [])) +
+            (1 if context.user_data.get("main_rental_item") else 0)
+        )
+        
+        if remaining_items_count > 0:
+            reply_markup = build_remove_items_keyboard(context.user_data)
+            await query.message.reply_text(
+                "Select another item to remove, or click 'Done Removing'.",
+                reply_markup=reply_markup,
+            )
+        else:
+            # All items removed - return to edit menu automatically
+            await query.message.reply_text(
+                "✅ All items have been removed. Returning to edit menu."
+            )
+            context.user_data["state"] = SELECTING_FIELD_TO_EDIT
+            from .keyboards import build_edit_fields_keyboard
+            reply_markup = build_edit_fields_keyboard(context.user_data)
+            await query.message.reply_text(
+                "Which field would you like to edit?",
+                reply_markup=reply_markup,
+            )
+    
+    except Exception as e:
+        logger.error(f"Error in remove_items_callback_handler: {e}")
+        await query.message.reply_text(f"❌ An error occurred: {str(e)}")
+
+
+# ============================================================================
+# OPTIONAL FIX 3: Improve field_edit_options_callback_handler()
+# This adds better feedback for rental fee field removal
+# Replace lines 1106-1162 with this:
+# ============================================================================
+
+async def field_edit_options_callback_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Handles the options (Edit Value, Remove Field, Back) for editing a specific field."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    # Extract the base field name, regardless of 'edit_value_' or 'remove_field_' prefix
+    field_to_edit = data.replace("edit_value_", "").replace("remove_field_", "")
+
+    if data.startswith("edit_value_"):
+        # Set state to await new value
+        context.user_data["state"] = EDITING_FIELD
+        context.user_data["editing_field"] = field_to_edit
+        await query.edit_message_text(text=edit_field_prompt(field_to_edit))
+        
+    elif data.startswith("remove_field_"):
+        if field_to_edit in context.user_data:
+            del context.user_data[field_to_edit]
+
+            # If removing a rental fee, trigger rebuild
+            if field_to_edit in [
+                "road_tax_amount",
+                "insurance_amount",
+                "sticker_amount",
+                "agreement_amount",
+                "puspakom_amount",
+            ]:
+                context.user_data["rental_fees_collected"] = False
+                context.user_data["fees_to_ask"] = []
+                await query.edit_message_text(
+                    text=f"✅ Field '{field_to_edit.replace('_', ' ').title()}' removed. Recalculating rental fees..."
+                )
+                # Send updated confirmation
+                await send_confirmation_message(update, context, is_review=False)
+                # Trigger fee rebuild
+                await ask_for_next_rental_fee(update, context)
+                return
+
+            await query.edit_message_text(
+                text=f"✅ Field '{field_to_edit.replace('_', ' ').title()}' removed."
+            )
+            
+            # Send fresh confirmation message
+            await send_confirmation_message(update, context, is_review=False)
+            
+            # Return to main edit menu
+            context.user_data["state"] = SELECTING_FIELD_TO_EDIT
+            from .keyboards import build_edit_fields_keyboard
+            reply_markup = build_edit_fields_keyboard(context.user_data)
+            await query.message.reply_text(
+                "You can edit another field or click 'Done Editing'.",
+                reply_markup=reply_markup,
+            )
+        else:
+            await query.edit_message_text(
+                text=f"🤔 Field '{field_to_edit.replace('_', ' ').title()}' was already empty or not found."
+            )
+            # Return to main edit menu
+            context.user_data["state"] = SELECTING_FIELD_TO_EDIT
+            from .keyboards import build_edit_fields_keyboard
+            reply_markup = build_edit_fields_keyboard(context.user_data)
+            await query.message.reply_text(
+                "You can edit another field or click 'Done Editing'.",
+                reply_markup=reply_markup,
+            )
+            
+    elif data == "edit_done":  # Back to Edit Menu
+        context.user_data["state"] = SELECTING_FIELD_TO_EDIT
+        from .keyboards import build_edit_fields_keyboard
+        reply_markup = build_edit_fields_keyboard(context.user_data)
+        await query.edit_message_text(
+            "Which field would you like to edit?", reply_markup=reply_markup
+        )

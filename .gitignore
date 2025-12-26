@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+
+# Other
+.idea/
+.vscode/
+*.log
+Export/
+Quote CSV/
+*output.txt
+*output_clean.txt
+*log.txt
+*.pkl
+Export/*.pdf
+*.bak
+*.bak.final
