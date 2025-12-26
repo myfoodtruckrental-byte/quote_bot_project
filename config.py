@@ -16,4 +16,8 @@ SQL_ACCOUNTING_DCF_PATH = r"C:\eStream\SQLAccounting\Share\Local.DCF"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # --- Google Gemini API Configuration ---
+<<<<<<< HEAD
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+=======
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+>>>>>>> 12c54818c4ab68d917833af7979a7fe5eaeec8c9
