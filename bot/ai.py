@@ -73,9 +73,13 @@ async def extract_details_from_text(text: str) -> dict:
                 # Fallback: Try to find the JSON object boundaries
                 start = cleaned_response.find("{")
                 end = cleaned_response.rfind("}") + 1
-                if start != -1 and end != 0:
+                if start != -1 and end != 0 and end > start:
                     json_str = cleaned_response[start:end]
-                    return json.loads(json_str)
+                    try:
+                        return json.loads(json_str)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Fallback JSON parsing also failed: {e}")
+                        raise
                 else:
                     raise
 
@@ -159,9 +163,13 @@ async def extract_line_items_from_text(text: str) -> list:
                 # Fallback: Try to find the JSON list boundaries
                 start = cleaned_response.find("[")
                 end = cleaned_response.rfind("]") + 1
-                if start != -1 and end != 0:
+                if start != -1 and end != 0 and end > start:
                     json_str = cleaned_response[start:end]
-                    return json.loads(json_str)
+                    try:
+                        return json.loads(json_str)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Fallback line items parsing also failed: {e}")
+                        raise
                 else:
                     raise
 

@@ -73,11 +73,6 @@ logger = logging.getLogger(__name__)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles the /start command by clearing data and showing the main menu."""
     context.user_data.clear()
-    context.user_data.pop("issuing_company", None)
-    if "service_menu_path" in context.user_data:
-        del context.user_data["service_menu_path"]
-    if "state_history" in context.user_data:
-        del context.user_data["state_history"]
 
     message = update.message or (
         update.callback_query.message if update.callback_query else None
@@ -130,7 +125,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if current_state == START:
         context.user_data.clear()
-        context.user_data.pop("issuing_company", None)
         initial_text = user_text.lower()
         explicit_doc_type = None
         if "sales" in initial_text:
@@ -145,17 +139,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         await update.message.reply_text("Analyzing your request...")
         details = await extract_details_from_text(user_text)
-        if details.get("line_items"):
-            for item in details["line_items"]:
-                # Robust key mapping
-                if "description" in item and "line_description" not in item:
-                    item["line_description"] = item.pop("description")
-                if "quantity" in item and "qty" not in item:
-                    item["qty"] = item.pop("quantity")
 
-                desc = item.get("line_description")
-                if desc:
-                    item["gl_code"] = get_gl_code_for_service(desc)
+        # Always go to a review step to let the user see what the AI extracted
+        # and correct any "hallucinated" fields.
+        logger.info(
+            f"DEBUG: Details from AI to be reviewed by user: {json.dumps(details, indent=2, default=str)}"
+        )
 
         if explicit_doc_type:
             context.user_data["doc_type"] = explicit_doc_type
@@ -163,6 +152,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         for key, value in details.items():
             if value:
                 context.user_data[key] = value
+
         await send_confirmation_message(update, context, is_review=True)
         return
 
@@ -195,6 +185,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             is_valid, error_message = validate_phone_number(user_text)
             if is_valid:
                 processed_value = user_text.strip()
+        elif field_to_fill == "company_address":
+            processed_value = "\n".join(
+                [line.strip() for line in user_text.split("\n") if line.strip()]
+            )
         elif field_to_fill in [
             "rental_amount",
             "security_deposit",
@@ -711,8 +705,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     analyzing_msg = await update.message.reply_text("Analyzing the image... 📄")
     context.user_data["confirmation_message_id"] = analyzing_msg.message_id
     photo_file = await update.message.photo[-1].get_file()
-    photo_path = await photo_file.download_to_drive()
+    photo_path = None
     try:
+        photo_path = await photo_file.download_to_drive()
         with PIL.Image.open(photo_path) as img:
             extracted_text = await extract_text_from_image(
                 img
@@ -725,10 +720,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             # Now extract details from the text
             details = await extract_details_from_text(extracted_text)
+
+            # Always go to a review step to let the user see what the AI extracted
+            # and correct any "hallucinated" fields.
             logger.info(
-                "--- EXTRACTED DETAILS FROM IMAGE --- \n%s",
-                json.dumps(details, indent=2, default=str),
+                f"DEBUG: Details from AI to be reviewed by user (from image): {json.dumps(details, indent=2, default=str)}"
             )
+
             if not details:
                 await update.message.reply_text(
                     "Sorry, I couldn't understand the extracted text. Please provide details manually."
@@ -756,7 +754,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             await send_confirmation_message(update, context, is_review=True)
     finally:
-        if os.path.exists(str(photo_path)):
+        if photo_path and os.path.exists(str(photo_path)):
             os.remove(str(photo_path))
 
 
@@ -1731,38 +1729,41 @@ async def rental_fee_callback_handler(
     context.user_data["fees_to_ask"] = fees_to_ask
 
     if action == "skip":
-        is_monthly = context.user_data.get("rental_period_type") == "monthly"
-
-        # Special "excluded" logic ONLY for these fees on monthly rentals
-        if is_monthly and fee_name in ["road_tax", "insurance", "puspakom"]:
-            context.user_data[f"{fee_name}_is_excluded"] = True
-            context.user_data[f"{fee_name}_amount"] = 0  # Set amount to 0
-
-            # Rebuild and proceed to next fee
-            rebuild_rental_fee_items(context)
-            await query.edit_message_text(
-                text=f"Okay, {fee_name.replace('_', ' ').title()} will be shown as Not Included."
+        # Handle the special logic for Sticker (Not Included) and Agreement (Excluded)
+        if fee_name == "sticker":
+            # If "Not Included" is pressed for Sticker, just remove the amount to ensure it's not rendered.
+            if f"{fee_name}_amount" in context.user_data:
+                del context.user_data[f"{fee_name}_amount"]
+            context.user_data.pop(
+                f"{fee_name}_is_excluded", None
+            )  # Ensure no excluded flag
+            message = (
+                f"Okay, {fee_name.replace('_', ' ').title()} will not be included."
             )
-            await ask_for_next_rental_fee(update, context)
-            return
+        elif fee_name == "agreement":
+            # If "Excluded" is pressed for Agreement, set amount to 0 and flag as excluded.
+            context.user_data[f"{fee_name}_amount"] = 0
+            context.user_data[f"{fee_name}_is_excluded"] = True
+            message = f"Okay, {fee_name.replace('_', ' ').title()} will be moved to the 'Excluded Items' section."
+        else:
+            # Default "skip" behavior for Road Tax, Insurance, Puspakom
+            context.user_data[f"{fee_name}_amount"] = 0
+            context.user_data[f"{fee_name}_is_excluded"] = True
+            message = f"Okay, {fee_name.replace('_', ' ').title()} will be shown as Not Included."
 
-        # Default "skip" behavior for all other cases (daily rentals, sticker, agreement, etc.)
-        if f"{fee_name}_amount" in context.user_data:
-            del context.user_data[f"{fee_name}_amount"]
+        rebuild_rental_fee_items(context)
 
+        # Check if we are editing or in the initial flow
         if context.user_data.get("rental_fees_collected"):
-            rebuild_rental_fee_items(context)
             context.user_data["state"] = SELECTING_FIELD_TO_EDIT
             reply_markup = build_edit_fields_keyboard(context.user_data)
             await query.edit_message_text(
-                text=f"Okay, {fee_name.replace('_', ' ').title()} excluded. Returning to menu.",
-                reply_markup=reply_markup,
+                text=f"{message} Returning to menu.", reply_markup=reply_markup
             )
         else:
-            await query.edit_message_text(
-                text=f"Okay, {fee_name.replace('_', ' ').title()} will be excluded."
-            )
+            await query.edit_message_text(text=message)
             await ask_for_next_rental_fee(update, context)
+        return
 
     elif action == "included":
         context.user_data[f"{fee_name}_amount"] = 0

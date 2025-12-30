@@ -36,7 +36,7 @@ from .keyboards import (
 logger = logging.getLogger(__name__)
 
 
-API_URL_LOCAL = "http://localhost:8000/generate_quotation_pdf/"
+API_URL_LOCAL = os.getenv("API_URL", "http://localhost:8000/generate_quotation_pdf/")
 
 
 async def ask_for_doc_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -366,9 +366,9 @@ async def ask_for_next_rental_fee(
             context.user_data["fees_to_ask"] = [
                 "road_tax",
                 "insurance",
+                "puspakom",
                 "sticker",
                 "agreement",
-                "puspakom",
             ]
         fees_to_ask = context.user_data["fees_to_ask"]
 
@@ -378,7 +378,7 @@ async def ask_for_next_rental_fee(
 
         context.user_data["rental_fees_collected"] = True
         # Pre-select default equipment
-        context.user_data["selected_equipment"] = DEFAULT_RENTAL_EQUIPMENT
+        context.user_data["selected_equipment"] = DEFAULT_RENTAL_EQUIPMENT.copy()
         await show_equipment_checklist(
             update, context
         )  # This is now imported from .logic
@@ -389,24 +389,21 @@ async def ask_for_next_rental_fee(
 
     is_monthly = context.user_data.get("rental_period_type") == "monthly"
 
-    # Direct to price input for Sticker and Agreement, regardless of rental type
-    if next_fee in ["sticker", "agreement"]:
-        context.user_data["state"] = AWAITING_INFO
-        context.user_data["waiting_for_field"] = f"{next_fee}_amount"
-        await query.edit_message_text(text=f"Please provide the price for {fee_name}:")
-        return
+    # Default button texts
+    btn_price_text = "Enter Price"
+    btn_included_text = "Included in Package"
+    btn_excluded_text = "Excluded"
 
     if is_monthly:
-        if next_fee == "maintenance":
-            btn_price_text = "Every 3 Month / 5000km"
-            btn_included_text = "Included (3mo/5000km)"
-        else:
+        if next_fee in ["road_tax", "insurance", "puspakom"]:
             btn_price_text = "Every 6 Month"
             btn_included_text = "Included every 6month"
+            btn_excluded_text = "Not Included"
+
+    # Custom button texts for specific fees
+    if next_fee == "sticker":
         btn_excluded_text = "Not Included"
-    else:
-        btn_price_text = "Enter Price"
-        btn_included_text = "Included in Package"
+    elif next_fee == "agreement":
         btn_excluded_text = "Excluded"
 
     keyboard = [
@@ -499,7 +496,8 @@ def _clean_amount_string(amount_str: Union[str, float]) -> float:
         return amount_str
     try:
         return float(str(amount_str).replace(",", ""))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Could not convert '{amount_str}' to float: {e}")
         return 0.0
 
 
@@ -526,29 +524,43 @@ async def dispatch_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         json.dumps(data, indent=2, default=str),
     )
 
-    # Define prefixes for the new doc_no format
+    # --- New: Dynamic Prefix Generation ---
+    issuing_company_name = data.get("issuing_company", "Unique Enterprise").upper()
+
+    company_prefixes = {
+        "UNIQUE ENTERPRISE": "UE",
+        "CARTRUCKVAN SDN. BHD.": "CTV",
+    }
+    company_prefix = company_prefixes.get(issuing_company_name, "QT")  # Default to QT
+
     doc_type_prefixes = {
         "sales": "SQ",
         "refurbish": "RQ",
         "rental": "RN",
     }
-    prefix = doc_type_prefixes.get(doc_type, "QT")
+    doc_type_prefix = doc_type_prefixes.get(doc_type, "QT")  # Default to QT
 
-    truck_num_part = data.get("truck_number", "MISC").replace("/", "-")
+    truck_num_part = (data.get("truck_number") or "MISC").replace("/", "-")
     date_part = datetime.now().strftime("%d%m%y")
 
-    # Ensure issuing_company is uppercase for lookup in COMPANY_ADDRESSES
-    issuing_company_name = data.get("issuing_company", "Unique Enterprise").upper()
+    # Construct the doc_no
+    doc_no = f"{company_prefix}{doc_type_prefix}-{truck_num_part}-{date_part}"
+
+    # Clean up customer address to remove extra blank lines
+    company_address = data.get("company_address", "")
+    cleaned_address = "\n".join(
+        [line.strip() for line in company_address.split("\n") if line.strip()]
+    )
 
     payload = {
         "type": doc_type,
         "cust_code": "300-C0002",
         "cust_name": data.get("company_name", "CASH SALE"),
-        "company_address": data.get("company_address", ""),
+        "company_address": cleaned_address,
         "cust_contact": data.get("cust_contact", ""),
         "truck_number": data.get("truck_number", ""),
         "issuing_company": issuing_company_name,
-        "doc_no": f"{prefix}-{truck_num_part}-{date_part}",
+        "doc_no": doc_no,
         "description": description,
         "salesperson": data.get("salesperson"),
         "payment_phases": data.get("payment_phases", []),
