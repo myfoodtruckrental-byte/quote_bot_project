@@ -11,17 +11,17 @@ COMPANY_ADDRESSES = {
         "logo_path": None,
         "ssm_no": "199601008192",
     },
-    "RADI-STAR SDN. BHD.": {
-        "address": "Lot 4906, Jalan SM6, Taman Sunway Batu Caves,\n68100, Batu Caves, Selangor\nTel: 0166616018 and 0166616019",
-        "logo_path": None,
-        "ssm_no": "200201023120",
-    },
+    # "RADI-STAR SDN. BHD.": {
+    #     "address": "Lot 4906, Jalan SM6, Taman Sunway Batu Caves,\n68100, Batu Caves, Selangor\nTel: 0166616018 and 0166616019",
+    #     "logo_path": None,
+    #     "ssm_no": "200201023120",
+    # },
 }
 
 BANK_DETAILS = {
     "UNIQUE ENTERPRISE": "Public Bank 3203946806",
     "CARTRUCKVAN SDN. BHD.": "ALLIANCE BANK BERHAD : 140640010009752",
-    "RADI-STAR SDN. BHD.": "PUBLIC BANK BERHAD : 3120670022",
+    # "RADI-STAR SDN. BHD.": "PUBLIC BANK BERHAD : 3120670022",
 }
 
 TERMS_AND_CONDITIONS = {

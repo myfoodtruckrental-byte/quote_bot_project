@@ -104,11 +104,17 @@ def _clean_data(data):
 
 def _prepare_template_data(quote_data):
     """Enriches the quote data with details needed for rendering."""
+    pdf_generator_logger.info(
+        "--- PDF Generator Received Data ---\n%s", json.dumps(quote_data, indent=2)
+    )
+
     # Clean the data first to remove N/As
     _clean_data(quote_data)
 
     base_doc_type = quote_data.get("type", "sales")
     is_proforma = quote_data.get("is_proforma", False)
+
+    quote_data["doc_type"] = base_doc_type
 
     # Determine Title
     if is_proforma:
@@ -193,29 +199,52 @@ def _prepare_template_data(quote_data):
     # --- Main Items Table ---
     main_items_html = ""
     if base_doc_type == "rental":
+        items_to_render = []
         if quote_data.get("main_rental_item"):
-            item = quote_data["main_rental_item"]
-            main_items_html += f'<tr><td style="font-size: 120%;">1</td><td style="font-size: 120%;">{item.get("line_description", "")}</td><td style="font-size: 120%; text-align: right;">1</td><td style="font-size: 120%; text-align: right;">{item.get("unit_price", 0.0):,.2f}</td></tr>'
-        if quote_data.get("service_line_items"):
-            start_index = 2 if quote_data.get("main_rental_item") else 1
-            for i, item in enumerate(
-                quote_data["service_line_items"], start=start_index
-            ):
-                main_items_html += f'<tr><td style="font-size: 120%;"><b>{i}</b></td><td style="font-size: 120%;">{item.get("line_description", "")}</td><td style="font-size: 120%; text-align: right;">{item.get("qty", 1)}</td><td style="font-size: 120%; text-align: right;">{item.get("unit_price", 0.0):,.2f}</td></tr>'
+            items_to_render.append(quote_data["main_rental_item"])
+
+        service_items = quote_data.get("service_line_items", [])
+        if service_items:
+            items_to_render.extend(service_items)
+
         if quote_data.get("security_deposit", 0) > 0:
-            last_index = (
-                len(quote_data.get("service_line_items", []))
-                + (1 if quote_data.get("main_rental_item") else 0)
-                + 1
+            items_to_render.append(
+                {
+                    "line_description": "Security Deposit",
+                    "qty": 1,
+                    "unit_price": quote_data.get("security_deposit", 0.0),
+                }
             )
-            main_items_html += f'<tr><td style="font-size: 120%;"><b>{last_index}</b></td><td style="font-size: 120%;">Security Deposit</td><td style="font-size: 120%; text-align: right;">1</td><td style="font-size: 120%; text-align: right;">{quote_data.get("security_deposit", 0.0):,.2f}</td></tr>'
+
+        for i, item in enumerate(items_to_render, start=1):
+            main_items_html += f'<tr><td style="font-size: 120%;"><b>{i}</b></td><td style="font-size: 120%;">{item.get("line_description", "")}</td><td style="font-size: 120%; text-align: right;">{item.get("qty", 1)}</td><td style="font-size: 120%; text-align: right;">{item.get("unit_price", 0.0):,.2f}</td></tr>'
+
     else:  # For sales and refurbish
         if quote_data.get("line_items"):
             # Ensure items are cleaned
             _clean_data(quote_data["line_items"])
             for i, item in enumerate(quote_data["line_items"], start=1):
                 main_items_html += f'<tr><td style="font-size: 120%;"><b>{i}</b></td><td style="font-size: 120%;">{item.get("line_description", "")}</td><td style="font-size: 120%; text-align: right;">{item.get("qty", 1)}</td><td style="font-size: 120%; text-align: right;">{item.get("unit_price", 0.0) * item.get("qty", 1):,.2f}</td></tr>'
+
     quote_data["main_items_html"] = main_items_html
+
+    # --- Excluded Items Box (Rental Only) ---
+    excluded_items_html = ""
+    if base_doc_type == "rental" and quote_data.get("excluded_line_items"):
+        excluded_items = quote_data["excluded_line_items"]
+        excluded_items_html += '<div class="details-box"><h4 style="margin-top: 0; margin-bottom: 5px;">Excluded Items</h4>'
+        excluded_items_html += '<ul style="margin: 0; padding-left: 20px;">'
+
+        for item in excluded_items:
+            desc = item.get("line_description", "")
+            # Special formatting for multi-line maintenance
+            if "Maintenance" in desc:
+                desc = "Maintenance (Every 3month/5000km, which ever comes first)"
+            excluded_items_html += f"<li>{desc}</li>"
+
+        excluded_items_html += "</ul></div>"
+    quote_data["excluded_items_html"] = excluded_items_html
+    pdf_generator_logger.info(f"Generated excluded_items_html: {excluded_items_html}")
 
     # --- Equipment Provided Box (Rental Only) ---
     equipment_html = ""
@@ -225,18 +254,17 @@ def _prepare_template_data(quote_data):
         left_col = equipment[:half_point]
         right_col = equipment[half_point:]
         equipment_html += '<div class="details-box" style="font-size: 110%;"><h4 style="margin-top: 0; margin-bottom: 5px;">Equipment & Service Provided</h4>'
+
+        # Combine left and right columns into a single string with <br>
+        left_col_str = "<br>".join([f"{item}" for item in left_col])
+        right_col_str = "<br>".join([f"{item}" for item in right_col])
+
         equipment_html += (
             '<table style="width: 100%; border: 0;"><tr style="vertical-align: top;">'
+            f'<td style="width: 50%; padding-right: 5px; border: 0;">{left_col_str}</td>'
+            f'<td style="width: 50%; padding-left: 5px; border: 0;">{right_col_str}</td>'
+            "</tr></table></div>"
         )
-        equipment_html += '<td style="width: 50%; padding-right: 5px; border: 0;"><ul>'
-        for item in left_col:
-            equipment_html += f"<li>{item}</li>"
-        equipment_html += (
-            '</ul></td><td style="width: 50%; padding-left: 5px; border: 0;"><ul>'
-        )
-        for item in right_col:
-            equipment_html += f"<li>{item}</li>"
-        equipment_html += "</ul></td></tr></table></div>"
     quote_data["equipment_html"] = equipment_html
 
     # --- Description Heading ---
@@ -273,9 +301,7 @@ def _prepare_template_data(quote_data):
     left_col_top += "</td></tr></table></td>"
 
     # Right Column: Company Address
-    company_address_formatted = quote_data.get("issuing_company_address", "").replace(
-        "\n", "<br>"
-    )
+    company_address_formatted = quote_data.get("issuing_company_address", "")
     right_col_top = f'<td style="width: 40%; border: 0; text-align: right; font-size: 13px; vertical-align: middle;">{company_address_formatted}</td>'
 
     top_section_html += left_col_top + right_col_top + "</tr></table>"
@@ -328,6 +354,8 @@ def _prepare_template_data(quote_data):
     header_content_html += f'<div class="details-box" style="font-size: 12px; margin-bottom: 20px;"><table style="width: 100%; border: 0;"><tr><td style="border: 0; padding: 2px; width: 50%;"><strong>Lorry No:</strong> {truck_number}</td><td style="border: 0; padding: 2px; width: 50%;">{vehicle_details_right_col}</td></tr></table></div>'
 
     quote_data["header_content_html"] = header_content_html
+
+    pdf_generator_logger.info(f"equipment_html: {quote_data.get('equipment_html')}")
 
     return quote_data
 

@@ -35,6 +35,7 @@ class QuotationLineItem(BaseModel):
 class PaymentPhase(BaseModel):
     name: str
     amount: float
+    remarks: Optional[str] = None
 
 
 class MultiLineQuotationData(BaseModel):
@@ -49,15 +50,16 @@ class MultiLineQuotationData(BaseModel):
     doc_no: str
     description: str
     salesperson: Optional[str] = None
-    line_items: List[QuotationLineItem] = []
-    service_line_items: List[QuotationLineItem] = []
+    line_items: List[LineItem] = []
+    service_line_items: List[LineItem] = []
+    excluded_line_items: List[LineItem] = []
     included_services: List[str] = []
     payment_phases: List[PaymentPhase] = []
     total_amount: float
     is_proforma: bool = False
 
     # Rental specific fields
-    main_rental_item: Optional[dict] = None
+    main_rental_item: Optional[LineItem] = None
     rental_period_type: Optional[str] = None
     contract_period: Optional[str] = None
     rental_start_date: Optional[str] = None

@@ -4,6 +4,7 @@ import os
 import httpx  # Changed from requests
 from datetime import datetime, date
 import telegram
+from typing import Union
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -35,7 +36,7 @@ from .keyboards import (
 logger = logging.getLogger(__name__)
 
 
-API_URL_LOCAL = "http://127.0.0.1:8000/generate_quotation_pdf/"
+API_URL_LOCAL = "http://localhost:8000/generate_quotation_pdf/"
 
 
 async def ask_for_doc_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -262,109 +263,87 @@ def rebuild_rental_fee_items(context: ContextTypes.DEFAULT_TYPE):
     """
     Silently rebuilds the service_line_items list with the current rental fee values.
     Does NOT send messages, change state, or reset equipment.
+    Handles 'excluded' items for monthly rentals by placing them in a separate list.
     """
-    rental_fee_descriptions = [
-        "Road Tax (6mo)",
-        "Road Tax (Included)",
-        "Insurance (6mo)",
-        "Insurance (Included)",
-        "Sticker",
-        "Sticker (Included)",
-        "Agreement Fee",
-        "Agreement Fee (Included)",
-        "PUSPAKOM Fee",
-        "PUSPAKOM Fee (Included)",
+    is_monthly = context.user_data.get("rental_period_type") == "monthly"
+
+    filtered_service_line_items = []
+    excluded_line_items = []
+
+    fees_config = [
+        ("road_tax", "Road Tax", "930-000"),
+        ("insurance", "Insurance", "931-000"),
+        ("sticker", "Sticker", "501-000"),
+        ("agreement", "Agreement Fee", "501-000"),
+        ("puspakom", "PUSPAKOM Fee", "930-000"),
     ]
 
-    # Keep only service items that are NOT rental fees
-    filtered_service_line_items = [
-        item
-        for item in context.user_data.get("service_line_items", [])
-        if item.get("line_description") not in rental_fee_descriptions
-    ]
-
-    # Add the current rental fees based on context.user_data
-    if context.user_data.get("road_tax_amount") is not None:
-        description = (
-            "Road Tax (Included)"
-            if float(context.user_data["road_tax_amount"]) == 0
-            else "Road Tax (6mo)"
-        )
-        amount = float(context.user_data["road_tax_amount"])
-        filtered_service_line_items.append(
+    # Hardcode Maintenance for monthly rentals
+    if is_monthly:
+        excluded_line_items.append(
             {
                 "qty": 1,
-                "line_description": description,
-                "unit_price": amount,
-                "gl_code": "930-000",
-            }
-        )
-
-    if context.user_data.get("insurance_amount") is not None:
-        description = (
-            "Insurance (Included)"
-            if float(context.user_data["insurance_amount"]) == 0
-            else "Insurance (6mo)"
-        )
-        amount = float(context.user_data["insurance_amount"])
-        filtered_service_line_items.append(
-            {
-                "qty": 1,
-                "line_description": description,
-                "unit_price": amount,
-                "gl_code": "931-000",
-            }
-        )
-
-    if context.user_data.get("sticker_amount") is not None:
-        description = (
-            "Sticker (Included)"
-            if float(context.user_data["sticker_amount"]) == 0
-            else "Sticker"
-        )
-        amount = float(context.user_data["sticker_amount"])
-        filtered_service_line_items.append(
-            {
-                "qty": 1,
-                "line_description": description,
-                "unit_price": amount,
+                "line_description": "Maintenance (Every 3month/5000km, which ever comes first)",
+                "unit_price": 0.0,
                 "gl_code": "501-000",
             }
         )
 
-    if context.user_data.get("agreement_amount") is not None:
-        description = (
-            "Agreement Fee (Included)"
-            if float(context.user_data["agreement_amount"]) == 0
-            else "Agreement Fee"
-        )
-        amount = float(context.user_data["agreement_amount"])
-        filtered_service_line_items.append(
-            {
-                "qty": 1,
-                "line_description": description,
-                "unit_price": amount,
-                "gl_code": "501-000",
-            }
-        )
+    for fee_key, fee_name, gl_code in fees_config:
+        amount_key = f"{fee_key}_amount"
+        excluded_key = f"{fee_key}_is_excluded"
 
-    if context.user_data.get("puspakom_amount") is not None:
-        description = (
-            "PUSPAKOM Fee (Included)"
-            if float(context.user_data["puspakom_amount"]) == 0
-            else "PUSPAKOM Fee"
-        )
-        amount = float(context.user_data["puspakom_amount"])
-        filtered_service_line_items.append(
-            {
+        if context.user_data.get(amount_key) is not None:
+            try:
+                amount = float(context.user_data[amount_key])
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Could not convert {amount_key} to float. Value was: {context.user_data[amount_key]}"
+                )
+                continue  # Skip this fee if amount is invalid
+
+            is_excluded = context.user_data.get(excluded_key, False)
+
+            description = fee_name  # Default
+
+            if is_monthly:
+                if fee_key in ["agreement", "sticker"]:
+                    description = fee_name  # Just "Agreement Fee" or "Sticker"
+                else:
+                    period_text = "(Every 6 Month)"
+                    included_text = "(Included every 6month)"
+
+                    if amount == 0 and not is_excluded:
+                        description = f"{fee_name} {included_text}"
+                    else:
+                        description = f"{fee_name} {period_text}"
+            else:
+                if amount == 0:
+                    description = f"{fee_name} (Included)"
+                else:
+                    description = f"{fee_name}"
+
+            item = {
                 "qty": 1,
                 "line_description": description,
                 "unit_price": amount,
-                "gl_code": "930-000",
+                "gl_code": gl_code,
             }
-        )
+
+            if is_monthly and is_excluded:
+                excluded_line_items.append(item)
+            else:
+                filtered_service_line_items.append(item)
 
     context.user_data["service_line_items"] = filtered_service_line_items
+    context.user_data["excluded_line_items"] = excluded_line_items
+
+    logger.info("--- Rebuild Rental Fees ---")
+    logger.info(
+        f"Service Line Items: {json.dumps(filtered_service_line_items, indent=2)}"
+    )
+    logger.info(f"Excluded Line Items: {json.dumps(excluded_line_items, indent=2)}")
+    logger.info("---------------------------")
 
 
 async def ask_for_next_rental_fee(
@@ -408,14 +387,44 @@ async def ask_for_next_rental_fee(
     next_fee = fees_to_ask[0]  # Peek at the next fee
     fee_name = next_fee.replace("_", " ").title()
 
+    is_monthly = context.user_data.get("rental_period_type") == "monthly"
+
+    # Direct to price input for Sticker and Agreement, regardless of rental type
+    if next_fee in ["sticker", "agreement"]:
+        context.user_data["state"] = AWAITING_INFO
+        context.user_data["waiting_for_field"] = f"{next_fee}_amount"
+        await query.edit_message_text(text=f"Please provide the price for {fee_name}:")
+        return
+
+    if is_monthly:
+        if next_fee == "maintenance":
+            btn_price_text = "Every 3 Month / 5000km"
+            btn_included_text = "Included (3mo/5000km)"
+        else:
+            btn_price_text = "Every 6 Month"
+            btn_included_text = "Included every 6month"
+        btn_excluded_text = "Not Included"
+    else:
+        btn_price_text = "Enter Price"
+        btn_included_text = "Included in Package"
+        btn_excluded_text = "Excluded"
+
     keyboard = [
-        [InlineKeyboardButton("Enter Price", callback_data=f"rental_price_{next_fee}")],
         [
             InlineKeyboardButton(
-                "Included in Package", callback_data=f"rental_included_{next_fee}"
+                btn_price_text, callback_data=f"rental_price_{next_fee}"
             )
         ],
-        [InlineKeyboardButton("Excluded", callback_data=f"rental_skip_{next_fee}")],
+        [
+            InlineKeyboardButton(
+                btn_included_text, callback_data=f"rental_included_{next_fee}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                btn_excluded_text, callback_data=f"rental_skip_{next_fee}"
+            )
+        ],
         [InlineKeyboardButton("⬅️ Back", callback_data="back")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -484,6 +493,16 @@ async def send_confirmation_message(
     logger.info(f"New confirmation message sent with ID: {sent_message.message_id}")
 
 
+def _clean_amount_string(amount_str: Union[str, float]) -> float:
+    """Removes commas from amount strings and converts to float."""
+    if isinstance(amount_str, float):
+        return amount_str
+    try:
+        return float(str(amount_str).replace(",", ""))
+    except (ValueError, TypeError):
+        return 0.0
+
+
 async def dispatch_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Dispatches the final payload to the API."""
     chat_id = update.effective_chat.id
@@ -548,7 +567,7 @@ async def dispatch_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     {
                         "qty": item.get("qty", 1),
                         "line_description": desc,
-                        "unit_price": float(item.get("unit_price", 0)),
+                        "unit_price": _clean_amount_string(item.get("unit_price", 0)),
                         "gl_code": item.get("gl_code")
                         or get_gl_code_for_service(desc)
                         or "501-000",
@@ -565,7 +584,24 @@ async def dispatch_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     {
                         "qty": item.get("qty", 1),
                         "line_description": desc,
-                        "unit_price": float(item.get("unit_price", 0)),
+                        "unit_price": _clean_amount_string(item.get("unit_price", 0)),
+                        "gl_code": item.get("gl_code")
+                        or get_gl_code_for_service(desc)
+                        or "501-000",
+                    }
+                )
+
+    raw_excluded_items = data.get("excluded_line_items", [])
+    excluded_line_items = []
+    for item in raw_excluded_items:
+        if isinstance(item, dict):
+            desc = item.get("line_description") or item.get("description")
+            if desc:
+                excluded_line_items.append(
+                    {
+                        "qty": item.get("qty", 1),
+                        "line_description": desc,
+                        "unit_price": _clean_amount_string(item.get("unit_price", 0)),
                         "gl_code": item.get("gl_code")
                         or get_gl_code_for_service(desc)
                         or "501-000",
@@ -575,6 +611,7 @@ async def dispatch_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Update the payload with normalized lists
     payload["line_items"] = line_items
     payload["service_line_items"] = service_line_items
+    payload["excluded_line_items"] = excluded_line_items
 
     # Total amount calculation
     total_amount = sum(item["unit_price"] * item["qty"] for item in line_items)
@@ -592,13 +629,15 @@ async def dispatch_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             payload["main_rental_item"] = {
                 "qty": 1,
                 "line_description": rental_desc,
-                "unit_price": data.get("rental_amount", 0),
+                "unit_price": _clean_amount_string(data.get("rental_amount", 0)),
                 "gl_code": "535-000",
             }
-            payload["security_deposit"] = data.get("security_deposit", 0)
+            payload["security_deposit"] = _clean_amount_string(
+                data.get("security_deposit", 0)
+            )
 
-            total_amount += data.get("rental_amount", 0)
-            total_amount += data.get("security_deposit", 0)
+            total_amount += _clean_amount_string(data.get("rental_amount", 0))
+            total_amount += _clean_amount_string(data.get("security_deposit", 0))
 
         start_date_val, end_date_val = data.get("rental_start_date"), data.get(
             "rental_end_date"
@@ -629,7 +668,8 @@ async def dispatch_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     payload["body"] = data.get("body", "")
 
     logger.info(
-        "--- DISPATCHING PAYLOAD ---\n%s", json.dumps(payload, indent=2, default=str)
+        "--- FINAL DISPATCHING PAYLOAD ---\n%s",
+        json.dumps(payload, indent=2, default=str),
     )
     context.bot_data["last_payload"] = payload
 
@@ -786,6 +826,27 @@ async def check_and_transition(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return
 
+    # --- New Position for Issuing Company Check ---
+    # Ask for issuing company right after basic details, before doc-specific flows
+    issuing_company = data.get("issuing_company", "")
+    logger.info(
+        f"DEBUG: Checking issuing_company value: '{issuing_company}' (type: {type(issuing_company)})"
+    )
+
+    if (
+        not issuing_company
+        or str(issuing_company).strip() == ""
+        or str(issuing_company).strip().upper() == "N/A"
+    ):
+        logger.info(
+            "DEBUG: Issuing company is missing/N/A. Transitioning to WAITING_FOR_COMPANY."
+        )
+        context.user_data["state"] = WAITING_FOR_COMPANY
+        await ask_for_issuing_company(update, context)
+        return
+    else:
+        logger.info("DEBUG: Issuing company considered valid. Skipping selection.")
+
     # All basic info collected! Now proceed to doc-specific flows
     if doc_type.startswith("rental"):  # Also applies to rental_proforma
         rental_period_type = data.get("rental_period_type")
@@ -888,12 +949,6 @@ async def check_and_transition(update: Update, context: ContextTypes.DEFAULT_TYP
                 text="I need the line items for the refurbish quote (e.g., '1 unit rm10000' or 'description - RM price'). Please provide them.",
             )
             return
-
-    # Finally, ask for issuing company if it's missing
-    if not data.get("issuing_company"):
-        context.user_data["state"] = WAITING_FOR_COMPANY
-        await ask_for_issuing_company(update, context)
-        return
 
     # Everything collected! Show final confirmation
     await send_confirmation_message(update, context, is_review=False)

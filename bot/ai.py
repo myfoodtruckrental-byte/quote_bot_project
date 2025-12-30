@@ -29,26 +29,66 @@ async def extract_details_from_text(text: str) -> dict:
     model = genai.GenerativeModel("gemini-2.5-flash")
     prompt = f"""
     Extract the following details from the text below:
-    - truck_number
-    - company_name
-    - company_address
-    - cust_contact
-    - body
-    - salesperson
-    - line_items (with description, quantity, and unit_price)
+    - doc_type (infer if it is 'sales', 'rental', or 'refurbish' based on keywords like 'rental', 'hire', 'sale', 'repair'. Default to null if unsure.)
+    - truck_number (The vehicle number plate, e.g., 'BKG 9493')
+    - company_name (The **CUSTOMER'S** company name (the recipient). Look for 'To:', 'Customer:', or simply the *other* company name on the document that is NOT the issuing company/sender.)
+    - company_address (The **CUSTOMER'S** address. It is usually located near the customer's name. Do NOT use the sender's address.)
+    - cust_contact (The customer's phone number)
+    - body (The body type of the vehicle)
+    - salesperson (The name of the salesperson)
+    
+    FOR RENTAL QUOTES, also extract these specific amounts if present:
+    - rental_period_type (Infer 'monthly' or 'daily' based on context. Default to 'monthly' if unsure.)
+    - contract_period (The duration of the contract, e.g., '1 Year', '6 Months', '2 Years')
+    - rental_amount (The monthly or daily rental price)
+    - security_deposit (The deposit amount)
+    - road_tax_amount (Amount for road tax)
+    - insurance_amount (Amount for insurance)
+    - sticker_amount (Amount for stickers)
+    - agreement_amount (Amount for agreement fees)
+    - puspakom_amount (Amount for Puspakom inspection)
+
+    - line_items (A list of general objects with 'line_description', 'qty', 'unit_price'. Use this for items NOT covered by the specific fields above.)
 
     Text:
     {text}
 
     Return the extracted details in JSON format.
+    STRICTLY RETURN ONLY JSON. NO MARKDOWN. NO OTHER TEXT.
     """
-    try:
-        response = await model.generate_content_async(prompt)
-        # It's better to load the JSON here to handle potential errors
-        return json.loads(response.text)
-    except (json.JSONDecodeError, Exception) as e:
-        logger.error(f"Error calling Gemini API or parsing JSON: {e}")
-        return {}
+
+    for attempt in range(3):
+        try:
+            response = await model.generate_content_async(prompt)
+            text_response = response.text
+
+            # Cleanup potential markdown
+            cleaned_response = (
+                text_response.strip().replace("```json", "").replace("```", "").strip()
+            )
+
+            try:
+                return json.loads(cleaned_response)
+            except json.JSONDecodeError:
+                # Fallback: Try to find the JSON object boundaries
+                start = cleaned_response.find("{")
+                end = cleaned_response.rfind("}") + 1
+                if start != -1 and end != 0:
+                    json_str = cleaned_response[start:end]
+                    return json.loads(json_str)
+                else:
+                    raise
+
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"Attempt {attempt + 1} failed: {e}")
+            if attempt == 2:
+                logger.error(
+                    f"Error calling Gemini API or parsing JSON after 3 attempts: {e}"
+                )
+                if "response" in locals():
+                    logger.error(f"Final Raw API response: {response.text}")
+                return {}
+    return {}
 
 
 async def extract_text_from_image(image: PIL.Image.Image) -> str:
@@ -63,7 +103,9 @@ async def extract_text_from_image(image: PIL.Image.Image) -> str:
     """
     model = genai.GenerativeModel("gemini-2.5-flash")
     try:
-        response = await model.generate_content_async(image)
+        response = await model.generate_content_async(
+            ["Transcribe all text from this image.", image]
+        )
         return response.text
     except Exception as e:
         logger.error(f"Error calling Gemini API: {e}")
@@ -82,27 +124,54 @@ async def extract_line_items_from_text(text: str) -> list:
     """
     model = genai.GenerativeModel("gemini-2.5-flash")
     prompt = f"""
-    Extract the line items from the text below. Each item should have a 'description', 'qty', and 'unit_price'.
+    Extract the line items from the text below. Each item should have a 'line_description', 'qty', and 'unit_price'.
     If quantity is not mentioned, assume it is 1.
     If a line does not contain a price, it is not a line item and should be ignored.
-    The output MUST be a valid JSON list of objects. Each object in the list MUST contain 'description', 'qty', and 'unit_price' keys.
+    The output MUST be a valid JSON list of objects. Each object in the list MUST contain 'line_description', 'qty', and 'unit_price' keys.
 
     Text:
     {text}
 
     Return a valid JSON list of objects. For example:
     [
-        {{"description": "New Lorry", "qty": 1, "unit_price": 150000}},
-        {{"description": "Service B", "qty": 2, "unit_price": 250}}
+        {{"line_description": "New Lorry", "qty": 1, "unit_price": 150000}},
+        {{"line_description": "Service B", "qty": 2, "unit_price": 250}}
     ]
+    
+    Return the extracted details in a STRICT, VALID JSON format. 
+    Do not include any Markdown formatting (no ```json or ```).
+    STRICTLY RETURN ONLY JSON. NO MARKDOWN. NO OTHER TEXT.
     """
-    try:
-        response = await model.generate_content_async(prompt)
-        # Clean the response to ensure it's valid JSON
-        cleaned_response = (
-            response.text.strip().replace("```json", "").replace("```", "").strip()
-        )
-        return json.loads(cleaned_response)
-    except (json.JSONDecodeError, Exception) as e:
-        logger.error(f"Error in extract_line_items_from_text: {e}")
-        return []
+
+    for attempt in range(3):
+        try:
+            response = await model.generate_content_async(prompt)
+            text_response = response.text
+
+            # Cleanup potential markdown
+            cleaned_response = (
+                text_response.strip().replace("```json", "").replace("```", "").strip()
+            )
+
+            try:
+                return json.loads(cleaned_response)
+            except json.JSONDecodeError:
+                # Fallback: Try to find the JSON list boundaries
+                start = cleaned_response.find("[")
+                end = cleaned_response.rfind("]") + 1
+                if start != -1 and end != 0:
+                    json_str = cleaned_response[start:end]
+                    return json.loads(json_str)
+                else:
+                    raise
+
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"Attempt {attempt + 1} failed in extract_line_items: {e}")
+            if attempt == 2:
+                logger.error(
+                    f"Error in extract_line_items_from_text after 3 attempts: {e}"
+                )
+                if "response" in locals():
+                    logger.error(f"Raw API response: {response.text}")
+                return []
+    return []

@@ -78,19 +78,9 @@
         
         <!-- Financial Summary -->
         {% if doc_type == 'rental' %}
-            <table style="width: 100%; margin-top: 20px; page-break-inside: avoid;">
-                <tr>
-                    <td style="width: 60%; border:0;"></td>
-                    <td style="width: 40%; border:0;">
-                        <table style="border: 1px solid #ddd;">
-                            <tr>
-                                <td><strong>TOTAL AMOUNT</strong></td>
-                                <td class="text-right"><strong>RM {{ "%.2f"|format(total_amount) }}</strong></td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
+            <div class="totals text-right" style="border-top: 2px solid #333; padding-top: 10px; margin-top: 20px;">
+                <h3>TOTAL: RM {{ "%.2f"|format(total_amount) }}</h3>
+            </div>
         {% else %}
             <!-- Default footer for Sales/Refurbish -->
             <div class="totals text-right" style="border-top: 2px solid #333; padding-top: 10px; margin-top: 20px;">
@@ -103,7 +93,7 @@
         <div class="details-box" style="margin-top: 20px;">
             <strong>Payment Schedule:</strong>
             {% for phase in payment_phases %}
-                {{ phase.name }}: {% if phase.amount %}RM {{ "%.2f"|format(phase.amount) }}{% endif %}{% if not loop.last %}; {% endif %}
+                {{ phase.name }}: {% if phase.amount %}RM {{ "%.2f"|format(phase.amount) }}{% endif %}{% if phase.remarks %} ({{ phase.remarks }}){% endif %}{% if not loop.last %}; {% endif %}
             {% endfor %}
         </div>
         {% endif %}

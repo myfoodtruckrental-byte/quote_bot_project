@@ -19,3 +19,15 @@ Quote CSV/
 Export/*.pdf
 *.bak
 *.bak.final
+
+# Project Specific
+config.py
+persistence.pkl
+pdf_error.log
+bot/image.png
+image.png
+bot/sugestion fix.txt
+bot/recommend.txt
+edit and remove suggestion.txt
+__pycache__/
+**/__pycache__/

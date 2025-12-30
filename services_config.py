@@ -5,10 +5,10 @@ SALES_SERVICES = {
     "Puspakom": ["Inspection Puspakom", "OWN Inspection Puspakom"],
     "Road Tax": ["Road Tax (6Month)", "OWN Road Tax"],
     "Insurance": [
-        "1st Party",
-        "3rd Party",
-        "3rd Party fire and Theft",
-        "OWN Insurance",
+        "Insurance 1st Part",
+        "Insurance 3rd Party",
+        "Insurance 3rd Party Fire and Theft",
+        "Own Insurance",
     ],
 }
 
@@ -59,10 +59,10 @@ GL_CODE_MAPPING = {
     "road tax (6month)": "930-000",  # Specific mapping
     "own road tax": "930-000",  # Specific mapping
     "insurance": "931-000",
-    "1st party": "931-000",  # Specific mapping
-    "3rd party": "931-000",  # Specific mapping
-    "3rd party fire and theft": "931-000",  # Specific mapping
-    "own insurance": "931-000",  # Specific mapping
+    "insurance 1st part": "931-000",
+    "insurance 3rd party": "931-000",
+    "insurance 3rd party fire and theft": "931-000",
+    "own insurance": "931-000",
     "sticker": "501-000",  # Default for sticker
     "agreement fee": "501-000",  # Default for agreement fee
     "tukar nama": "930-000",  # Specific mapping

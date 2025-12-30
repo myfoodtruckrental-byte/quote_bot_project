@@ -338,17 +338,25 @@ def build_road_tax_keyboard(user_data: dict) -> InlineKeyboardMarkup:
 def build_insurance_keyboard(user_data: dict) -> InlineKeyboardMarkup:
     """Builds the keyboard for 'Insurance' options."""
     keyboard = [
-        [InlineKeyboardButton("1st Party", callback_data="sub_service_1st Party")],
-        [InlineKeyboardButton("3rd Party", callback_data="sub_service_3rd Party")],
         [
             InlineKeyboardButton(
-                "3rd Party (Fire & Theft)",
-                callback_data="sub_service_3rd Party fire and Theft",
+                "1st Part", callback_data="sub_service_Insurance 1st Part"
             )
         ],
         [
             InlineKeyboardButton(
-                "OWN Insurance", callback_data="sub_service_OWN Insurance"
+                "3rd Party", callback_data="sub_service_Insurance 3rd Party"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "3rd Party (Fire & Theft)",
+                callback_data="sub_service_Insurance 3rd Party Fire and Theft",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "Own Insurance", callback_data="sub_service_Own Insurance"
             )
         ],
         [

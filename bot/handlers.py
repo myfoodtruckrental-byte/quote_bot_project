@@ -73,6 +73,7 @@ logger = logging.getLogger(__name__)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles the /start command by clearing data and showing the main menu."""
     context.user_data.clear()
+    context.user_data.pop("issuing_company", None)
     if "service_menu_path" in context.user_data:
         del context.user_data["service_menu_path"]
     if "state_history" in context.user_data:
@@ -82,7 +83,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         update.callback_query.message if update.callback_query else None
     )
     if message:
-        await message.reply_text("Hello! I'm ready to create a new quote.")
+        await message.reply_text(
+            'Hello! I\'m ready to create a new quote.\n\nType "Sales", "Refurbish", or "Rental" to start a specific quote.\nOR\nSend a picture of a document/vehicle to extract details automatically.'
+        )
     else:
         logger.error("Could not find a message to reply to in start_command.")
 
@@ -127,6 +130,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if current_state == START:
         context.user_data.clear()
+        context.user_data.pop("issuing_company", None)
         initial_text = user_text.lower()
         explicit_doc_type = None
         if "sales" in initial_text:
@@ -143,7 +147,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         details = await extract_details_from_text(user_text)
         if details.get("line_items"):
             for item in details["line_items"]:
-                item["gl_code"] = get_gl_code_for_service(item["line_description"])
+                # Robust key mapping
+                if "description" in item and "line_description" not in item:
+                    item["line_description"] = item.pop("description")
+                if "quantity" in item and "qty" not in item:
+                    item["qty"] = item.pop("quantity")
+
+                desc = item.get("line_description")
+                if desc:
+                    item["gl_code"] = get_gl_code_for_service(desc)
 
         if explicit_doc_type:
             context.user_data["doc_type"] = explicit_doc_type
@@ -696,7 +708,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Analyzing the image... 📄")
+    analyzing_msg = await update.message.reply_text("Analyzing the image... 📄")
+    context.user_data["confirmation_message_id"] = analyzing_msg.message_id
     photo_file = await update.message.photo[-1].get_file()
     photo_path = await photo_file.download_to_drive()
     try:
@@ -723,11 +736,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 return
             if details.get("line_items"):
                 for item in details["line_items"]:
-                    item["gl_code"] = get_gl_code_for_service(item["line_description"])
+                    # Robust key mapping
+                    if "description" in item and "line_description" not in item:
+                        item["line_description"] = item.pop("description")
+                    if "quantity" in item and "qty" not in item:
+                        item["qty"] = item.pop("quantity")
+
+                    desc = item.get("line_description")
+                    if desc:
+                        item["gl_code"] = get_gl_code_for_service(desc)
 
             for key, value in details.items():
                 if value:
                     context.user_data[key] = value
+
+            # If it's a rental quote, ensure extracted fees are rebuilt into line items
+            if str(context.user_data.get("doc_type")).startswith("rental"):
+                rebuild_rental_fee_items(context)
+
             await send_confirmation_message(update, context, is_review=True)
     finally:
         if os.path.exists(str(photo_path)):
@@ -1374,7 +1400,12 @@ async def payment_phase_callback_handler(
         await query.edit_message_text(
             text=f"✅ Final balance of RM {balance:,.2f} calculated and added."
         )
-        await ask_for_payment_phase_review(update, context)
+        await check_and_transition(update, context)
+        return
+    elif data == "payment_phase_done":
+        context.user_data["payment_phases_complete"] = True
+        await query.edit_message_text(text="✅ Payment schedule confirmed.")
+        await check_and_transition(update, context)
         return
     elif data == "payment_phase_no":
         context.user_data["payment_phases_complete"] = True
@@ -1700,10 +1731,25 @@ async def rental_fee_callback_handler(
     context.user_data["fees_to_ask"] = fees_to_ask
 
     if action == "skip":
+        is_monthly = context.user_data.get("rental_period_type") == "monthly"
+
+        # Special "excluded" logic ONLY for these fees on monthly rentals
+        if is_monthly and fee_name in ["road_tax", "insurance", "puspakom"]:
+            context.user_data[f"{fee_name}_is_excluded"] = True
+            context.user_data[f"{fee_name}_amount"] = 0  # Set amount to 0
+
+            # Rebuild and proceed to next fee
+            rebuild_rental_fee_items(context)
+            await query.edit_message_text(
+                text=f"Okay, {fee_name.replace('_', ' ').title()} will be shown as Not Included."
+            )
+            await ask_for_next_rental_fee(update, context)
+            return
+
+        # Default "skip" behavior for all other cases (daily rentals, sticker, agreement, etc.)
         if f"{fee_name}_amount" in context.user_data:
             del context.user_data[f"{fee_name}_amount"]
 
-        # Check if we are editing
         if context.user_data.get("rental_fees_collected"):
             rebuild_rental_fee_items(context)
             context.user_data["state"] = SELECTING_FIELD_TO_EDIT

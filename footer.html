@@ -26,14 +26,55 @@
             padding: 10px;
             border: 1px solid #ddd;
             background-color: #ffffff;
+            margin-bottom: 15px; /* Add space between boxes in the same column */
         }
     </style>
 </head>
 <body>
     <div class="footer-block">
-        <!-- Signature & Other Details Area -->
+        
         <table class="signature-table">
+            {% if doc_type == 'rental' %}
+            <!-- RENTAL 3-COLUMN LAYOUT -->
             <tr>
+                <!-- Column 1: Excluded Items & Payment Details -->
+                <td style="width: 40%; padding-right: 10px; vertical-align: top;">
+                    {{ excluded_items_html|safe }}
+                    <div class="payment-details" style="margin-top: 20px;">
+                        <h4 style="margin-top: 0; margin-bottom: 5px;">Payment Details</h4>
+                        <p style="margin: 0;">All cheques are payable to <strong>{{ issuing_company }}</strong>.</p>
+                        <p style="margin: 0;">Bank Transfer: <strong>{{ bank_details }}</strong></p>
+                    </div>
+                </td>
+                
+                <!-- Column 2: Required Documents -->
+                <td style="width: 25%; padding-left: 10px; padding-right: 10px; vertical-align: top;">
+                    {% if required_documents %}
+                    <div class="details-box">
+                        <h4 style="margin-top: 0; margin-bottom: 5px;">Required Documents</h4>
+                        <ul style="margin: 0; padding-left: 20px;">
+                            {% for doc in required_documents %}
+                                <li>{{ doc }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                </td>
+
+                <!-- Column 3: Equipment & Signature -->
+                <td style="width: 35%; padding-left: 10px; vertical-align: top;">
+                    {{ equipment_html|safe }}
+                    <div class="signature-footer" style="margin-top: 20px;">
+                        <p style="margin-bottom: 5px; text-align: center;"><strong>Acceptance of Quotation</strong></p>
+                        <div style="border-bottom: 1px solid #333; height: 70px; margin-bottom: 5px;"></div>
+                        <p style="margin: 0; text-align: center; font-size: 11px;">Signature & Company Stamp</p>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <!-- SALES/REFURBISH 2-COLUMN LAYOUT -->
+            <tr>
+                <!-- Column 1: Required Documents & Payment Details -->
                 <td style="width: 60%; padding-right: 20px; vertical-align: top;">
                     {% if required_documents %}
                     <div class="details-box">
@@ -51,8 +92,9 @@
                         <p style="margin: 0;">Bank Transfer: <strong>{{ bank_details }}</strong></p>
                     </div>
                 </td>
+                
+                <!-- Column 2: Signature -->
                 <td style="width: 40%; padding-left: 20px; vertical-align: top;">
-                    {{ equipment_html|safe }}
                     <div class="signature-footer">
                         <p style="margin-bottom: 5px; text-align: center;"><strong>Acceptance of Quotation</strong></p>
                         <div style="border-bottom: 1px solid #333; height: 70px; margin-bottom: 5px;"></div>
@@ -60,6 +102,7 @@
                     </div>
                 </td>
             </tr>
+            {% endif %}
         </table>
         
         <p style="margin: 10px 0 0 0; text-align: justify; font-size: 8px;"><strong>Terms & Conditions:</strong> {{ terms_and_conditions }}</p>
