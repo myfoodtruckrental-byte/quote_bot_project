@@ -306,6 +306,10 @@ def rebuild_rental_fee_items(context: ContextTypes.DEFAULT_TYPE):
 
             description = fee_name  # Default
 
+            # Special logic for Sticker: 0 amount means Not Included (Excluded)
+            if fee_key == "sticker" and amount == 0:
+                is_excluded = True
+
             if is_monthly:
                 if fee_key in ["agreement", "sticker"]:
                     description = fee_name  # Just "Agreement Fee" or "Sticker"
@@ -403,27 +407,59 @@ async def ask_for_next_rental_fee(
     # Custom button texts for specific fees
     if next_fee == "sticker":
         btn_excluded_text = "Not Included"
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    btn_price_text, callback_data=f"rental_price_{next_fee}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    btn_excluded_text, callback_data=f"rental_skip_{next_fee}"
+                )
+            ],
+            [InlineKeyboardButton("⬅️ Back", callback_data="back")],
+        ]
     elif next_fee == "agreement":
         btn_excluded_text = "Excluded"
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    btn_price_text, callback_data=f"rental_price_{next_fee}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    btn_included_text, callback_data=f"rental_included_{next_fee}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    btn_excluded_text, callback_data=f"rental_skip_{next_fee}"
+                )
+            ],
+            [InlineKeyboardButton("⬅️ Back", callback_data="back")],
+        ]
+    else:
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    btn_price_text, callback_data=f"rental_price_{next_fee}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    btn_included_text, callback_data=f"rental_included_{next_fee}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    btn_excluded_text, callback_data=f"rental_skip_{next_fee}"
+                )
+            ],
+            [InlineKeyboardButton("⬅️ Back", callback_data="back")],
+        ]
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                btn_price_text, callback_data=f"rental_price_{next_fee}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                btn_included_text, callback_data=f"rental_included_{next_fee}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                btn_excluded_text, callback_data=f"rental_skip_{next_fee}"
-            )
-        ],
-        [InlineKeyboardButton("⬅️ Back", callback_data="back")],
-    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await context.bot.send_message(
