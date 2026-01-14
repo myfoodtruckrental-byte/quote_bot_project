@@ -16,6 +16,99 @@ except KeyError:
     raise ImportError("GEMINI_API_KEY not set, cannot use AI features.")
 
 
+async def extract_details_from_image(image: PIL.Image.Image) -> dict:
+    """
+    Uses the Gemini API to extract details directly from an image.
+    This leverages multimodal capabilities to understand layout and context
+    from documents, truck photos, or business cards.
+
+    Args:
+        image: The image to process.
+
+    Returns:
+        A dictionary of extracted details.
+    """
+    model = genai.GenerativeModel("gemini-2.5-flash")
+    prompt = """
+    Analyze this image and extract specific details into a JSON object. 
+    The image might be a document (invoice/quote), a photo of a vehicle (truck/lorry), or a business card.
+
+    **Extraction Rules:**
+    
+    1. **Truck/Vehicle Photos:** 
+       - **Company Name:** Prioritize the **visually largest** and **top-most** text block on the vehicle. This is usually the trade name (e.g., "AKI SERVICES").
+       - **Ignore Regulatory Text:** Text containing "BARANG", "PEKERJA", "SDN SJA", "BDM", or "BTM" refers to permits/specs. Do not use these as the Company Name unless no other name exists.
+       - **Number Plate:** Extract the vehicle registration number (e.g., 'BKG 9493').
+       - **Address/Contact:** Extract any printed addresses or phone numbers.
+       
+    2. **Business Cards:**
+       - Extract the Name, Company Name, Phone Number, and Address.
+       
+    3. **Documents:**
+       - Extract details as usual, distinguishing between the recipient (Customer) and the sender.
+
+    **Fields to Extract:**
+    - doc_type (infer 'sales', 'rental', or 'refurbish' only if there is clear context. Otherwise null.)
+    - truck_number (The vehicle number plate found in the image)
+    - company_name (The **CUSTOMER'S** company name. On a truck, this is the name on the door. On a card, it's the company represented.)
+    - company_address (The **CUSTOMER'S** address. It is usually located near the vehicle, card, or document.)
+    - cust_contact (Phone number found on the vehicle, card, or document.)
+    - body (The body type of the vehicle, if visually apparent or described)
+    - salesperson (Name of person on a business card, or salesperson in a document)
+    
+    **For Rental Documents Only:**
+    - rental_period_type (Infer 'monthly' or 'daily' based on context. Default to 'monthly' if unsure.)
+    - contract_period (The duration of the contract, e.g., '1 Year', '6 Months', '2 Years')
+    - rental_amount (The monthly or daily rental price)
+    - security_deposit (The deposit amount)
+    - road_tax_amount (Amount for road tax)
+    - insurance_amount (Amount for insurance)
+    - sticker_amount (Amount for stickers)
+    - agreement_amount (Amount for agreement fees)
+    - puspakom_amount (Amount for Puspakom inspection)
+
+    - line_items (A list of general objects with 'line_description', 'qty', 'unit_price'. Use this for items NOT covered by the specific fields above.)
+
+    Return the extracted details in JSON format.
+    STRICTLY RETURN ONLY JSON. NO MARKDOWN. NO OTHER TEXT.
+    """
+
+    for attempt in range(3):
+        try:
+            response = await model.generate_content_async([prompt, image])
+            text_response = response.text
+
+            # Cleanup potential markdown
+            cleaned_response = (
+                text_response.strip().replace("```json", "").replace("```", "").strip()
+            )
+
+            try:
+                return json.loads(cleaned_response)
+            except json.JSONDecodeError:
+                # Fallback: Try to find the JSON object boundaries
+                start = cleaned_response.find("{")
+                end = cleaned_response.rfind("}") + 1
+                if start != -1 and end != 0 and end > start:
+                    json_str = cleaned_response[start:end]
+                    try:
+                        return json.loads(json_str)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Fallback JSON parsing also failed: {e}")
+                        raise
+                else:
+                    raise
+
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"Attempt {attempt + 1} failed (Image Extraction): {e}")
+            if attempt == 2:
+                logger.error(f"Error calling Gemini API (Image) after 3 attempts: {e}")
+                if "response" in locals():
+                    logger.error(f"Final Raw API response: {response.text}")
+                return {}
+    return {}
+
+
 async def extract_details_from_text(text: str) -> dict:
     """
     Uses the Gemini API to extract details from the user's text.

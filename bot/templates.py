@@ -124,7 +124,9 @@ def build_confirmation_text(data, is_review=False) -> str:
                     qty_display = (
                         f"{item.get('qty', 1)}x " if item.get("qty", 1) > 1 else ""
                     )
-                    line_desc = item.get("description", "N/A")
+                    line_desc = item.get("line_description") or item.get(
+                        "description", "N/A"
+                    )
                     confirmation_text += (
                         f"- {qty_display}{line_desc}: {price_display}\n"
                     )

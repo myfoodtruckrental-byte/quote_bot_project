@@ -23,6 +23,7 @@ from .helpers import (
 from .ai import (
     extract_details_from_text,
     extract_text_from_image,
+    extract_details_from_image,
     extract_line_items_from_text,
 )
 from .logic import (
@@ -709,17 +710,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         photo_path = await photo_file.download_to_drive()
         with PIL.Image.open(photo_path) as img:
-            extracted_text = await extract_text_from_image(
-                img
-            )  # Call the correct function
-            if not extracted_text:
-                await update.message.reply_text(
-                    "Sorry, I couldn't extract text from the image. Please provide details manually."
-                )
-                return
-
-            # Now extract details from the text
-            details = await extract_details_from_text(extracted_text)
+            # New single-step multimodal extraction
+            details = await extract_details_from_image(img)
 
             # Always go to a review step to let the user see what the AI extracted
             # and correct any "hallucinated" fields.
@@ -729,7 +721,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             if not details:
                 await update.message.reply_text(
-                    "Sorry, I couldn't understand the extracted text. Please provide details manually."
+                    "Sorry, I couldn't understand the image. Please provide details manually."
                 )
                 return
             if details.get("line_items"):
@@ -743,6 +735,30 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     desc = item.get("line_description")
                     if desc:
                         item["gl_code"] = get_gl_code_for_service(desc)
+
+            # --- Fix: Protect existing doc_type selection ---
+            if context.user_data.get("doc_type"):
+                # If user already selected a type (e.g., via button), don't let AI override it
+                details.pop("doc_type", None)
+                logger.info("Preserving user-selected doc_type, ignoring AI inference.")
+
+            # --- Fix: Handle Company Name/Address Confirmation ---
+            # Instead of auto-setting company_name, store it for confirmation
+            if "company_name" in details:
+                context.user_data["is_company_name_from_image_extracted"] = True
+                context.user_data["extracted_image_company_name"] = details.pop(
+                    "company_name"
+                )
+
+                # Also temporarily store address/contact to go with the name
+                if "company_address" in details:
+                    context.user_data["extracted_image_company_address"] = details.pop(
+                        "company_address"
+                    )
+                if "cust_contact" in details:
+                    context.user_data["extracted_image_cust_contact"] = details.pop(
+                        "cust_contact"
+                    )
 
             for key, value in details.items():
                 if value:
@@ -1661,10 +1677,16 @@ async def confirm_company_name_callback_handler(
     )  # If we decide to store it separately
 
     if data == "confirm_company_name_yes":
-        # The correct name and address are already in user_data from handle_photo.
-        # We just need to confirm and proceed.
+        # The correct name and address were popped from temp storage.
+        # We MUST save them to the permanent fields.
+        context.user_data["company_name"] = extracted_name_to_confirm
+        if extracted_address:
+            context.user_data["company_address"] = extracted_address
+        if extracted_contact:
+            context.user_data["cust_contact"] = extracted_contact
+
         await query.edit_message_text(
-            text=f"✅ Confirmed customer name: '{context.user_data.get('company_name', '')}'. Proceeding..."
+            text=f"✅ Confirmed customer name: '{extracted_name_to_confirm}'. Proceeding..."
         )
 
     elif data == "confirm_company_name_no":
